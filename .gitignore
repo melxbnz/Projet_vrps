@@ -1,0 +1,31 @@
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments & Conda
+.venv/
+env/
+venv/
+.conda/
+conda-env/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+.notebook_cache/
+*.nbconvert.ipynb
+
+# Data and results
+data/*
+!data/.keep
+results/*
+!results/.keep
+!results/logs/
+!results/figures/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
