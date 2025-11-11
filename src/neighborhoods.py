@@ -80,3 +80,62 @@ def delta_cost(sol, move_type, *args):
     if move_type == "relocate":  return delta_relocate(sol, *args)
     if move_type == "swap":      return delta_swap(sol, *args)
     return math.inf
+
+
+
+#         5. RECHERCHE LOCALE AVEC VOISINAGE
+
+def local_search(sol):
+    """
+    Applique itérativement les mouvements Two-Opt, Relocate et Swap
+    tant qu'une amélioration de la fonction objectif F est trouvée.
+    """
+    improved = True
+    iteration = 0
+
+    while improved:
+        improved = False
+        best_delta = 0
+        best_move = None
+        iteration += 1
+
+        #  Parcours de tous les véhicules 
+        for k1 in range(sol.K):
+            r1 = sol.routes[k1]
+
+            #  (1) TWO-OPT sur la même tournée 
+            for i in range(len(r1)-1):
+                for j in range(i+1, len(r1)):
+                    Δ = delta_two_opt(sol, k1, i, j)
+                    if Δ < best_delta:
+                        best_delta, best_move = Δ, ("two_opt", k1, i, j)
+
+            #  (2) RELOCATE intra- et inter-tournées 
+            for i in range(len(r1)):
+                for k2 in range(sol.K):
+                    r2 = sol.routes[k2]
+                    for j in range(len(r2)+1):
+                        Δ = delta_relocate(sol, k1, i, k2, j)
+                        if Δ < best_delta:
+                            best_delta, best_move = Δ, ("relocate", k1, i, k2, j)
+
+            #  (3) SWAP intra- et inter-tournées
+            for i in range(len(r1)):
+                for k2 in range(sol.K):
+                    r2 = sol.routes[k2]
+                    for j in range(len(r2)):
+                        Δ = delta_swap(sol, k1, i, k2, j)
+                        if Δ < best_delta:
+                            best_delta, best_move = Δ, ("swap", k1, i, k2, j)
+
+        #  Application du meilleur move trouvé 
+        if best_move:
+            mv = best_move
+            if mv[0] == "two_opt":   apply_two_opt(sol, mv[1], mv[2], mv[3])
+            if mv[0] == "relocate":  apply_relocate(sol, mv[1], mv[2], mv[3], mv[4])
+            if mv[0] == "swap":      apply_swap(sol, mv[1], mv[2], mv[3], mv[4])
+            improved = True
+            print(f"Iter {iteration}: {mv[0]} {mv[1:]} -> Δ={best_delta:.2f}, Nouveau coût = {sol.cost():.2f}")
+
+    print("Aucune amélioration trouvée — solution locale atteinte.")
+    return sol
