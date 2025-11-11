@@ -1,5 +1,16 @@
 #Olivier
 # on suppose la classe instance deja definit ou minimum declaree car elle est utilise dans cette section.
+import numpy as np
+import random
+from dataclass import dataclass
+from copy import deepcopy
+from enum import Enum
+from typing import List, Tuple, Optional, Dict
+
+
+#=========================================================================================================
+# Ma cCLASS ALNS : ADAPTATIVE LARGE NEIGHBORHOOD SEARCH.
+#===========================================================================================================
 class ALNS:
     """
     Classe ALNS (Partie 6: métaheuristique adaptive ; destroy/repair itératif avec adaptation poids).
