@@ -53,7 +53,6 @@ def apply_relocate(sol, k1, i, k2, j):
     sol.routes[k2].insert(j, u)
 
 
-
 #        3. SWAP (échange de deux clients)
 
 def delta_swap(sol, k1, i, k2, j):
