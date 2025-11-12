@@ -1,141 +1,154 @@
 import math
+from typing import List, Tuple
 
-class Solution:
-    def __init__(self, V, K, c, q, Q, routes):
-        self.V, self.K, self.c, self.q, self.Q = V, K, c, q, Q
-        self.routes = routes                  # routes[k] = liste de clients
-        # construction explicite de x_{ijk}
-        self.x = [[[0 for _ in range(K)] for _ in V] for _ in V]
-        for k in range(K):
-            r = routes[k]; prev = 0
-            for j in r:
-                self.x[prev][j][k] = 1; prev = j
-            self.x[prev][0][k] = 1
+from contracts import Solution, Instance  # type: ignore
 
-    def cost(self):
-        """ Fonction objectif F = somme_k somme_i somme_j c_ij * x_ijk """
-        return sum(self.c[i][j]*self.x[i][j][k]
-                   for k in range(self.K) for i in self.V for j in self.V)
+# 1. TWO-OPT (inversion d’un segment [i..j])
+
+def apply_two_opt(sol: Solution, k: int, i: int, j: int):
+    """
+    Applique le mouvement Two-Opt sur la route k en inversant le segment entre 
+    les indices i et j (inclus).
+    
+    i et j sont des index de client dans la liste sol.routes[k].
+    """
+    # Inverse la sous-liste de clients
+    sol.routes[k][i:j+1] = list(reversed(sol.routes[k][i:j+1]))
 
 
+# 2. RELOCATE (déplacer un client)
 
-#        1. TWO-OPT (inversion d’un segment [i..j])
-
-def delta_two_opt(sol, k, i, j):
-    r, c = sol.routes[k], sol.c
-    a = 0 if i == 0 else r[i-1]
-    b, c1 = r[i], r[j]
-    d = 0 if j == len(r)-1 else r[j+1]
-    return (c[a][c1] + c[b][d]) - (c[a][b] + c[c1][d])
-
-def apply_two_opt(sol, k, i, j):
-    sol.routes[k][i:j+1] = reversed(sol.routes[k][i:j+1])
-
-
-
-#        2. RELOCATE (déplacer un client)
-
-def delta_relocate(sol, k1, i, k2, j):
-    M = sol
-    r1, r2, c = M.routes[k1], M.routes[k2], M.c
-    u = r1[i]
-    if k1 != k2 and sum(M.q[x] for x in r2)+M.q[u] > M.Q: return math.inf
-    a1 = 0 if i == 0 else r1[i-1]
-    b1 = 0 if i == len(r1)-1 else r1[i+1]
-    rm = -c[a1][u]-c[u][b1]+c[a1][b1]
-    a2 = 0 if j == 0 else r2[j-1]
-    b2 = 0 if j == len(r2) else r2[j]
-    ins = -c[a2][b2]+c[a2][u]+c[u][b2]
-    return rm + ins
-
-def apply_relocate(sol, k1, i, k2, j):
+def apply_relocate(sol: Solution, k1: int, i: int, k2: int, j: int):
+    """
+    Déplace le client à l'index i de la route k1 et l'insère 
+    à la position j de la route k2.
+    """
+    # Pop et insert sur la liste de clients
     u = sol.routes[k1].pop(i)
     sol.routes[k2].insert(j, u)
 
 
-#        3. SWAP (échange de deux clients)
+# 3. SWAP (échange de deux clients)
 
-def delta_swap(sol, k1, i, k2, j):
-    M = sol; c = M.c
-    r1, r2 = M.routes[k1], M.routes[k2]
-    u, v = r1[i], r2[j]
-    if k1 != k2:
-        if sum(M.q[x] for x in r1)-M.q[u]+M.q[v] > M.Q: return math.inf
-        if sum(M.q[x] for x in r2)-M.q[v]+M.q[u] > M.Q: return math.inf
-    a1 = 0 if i == 0 else r1[i-1]; b1 = 0 if i == len(r1)-1 else r1[i+1]
-    a2 = 0 if j == 0 else r2[j-1]; b2 = 0 if j == len(r2)-1 else r2[j+1]
-    old = c[a1][u]+c[u][b1]+c[a2][v]+c[v][b2]
-    new = c[a1][v]+c[v][b1]+c[a2][u]+c[u][b2]
-    return new - old
-
-def apply_swap(sol, k1, i, k2, j):
+def apply_swap(sol: Solution, k1: int, i: int, k2: int, j: int):
+    """
+    Échange le client à l'index i de la route k1 avec le client 
+    à l'index j de la route k2.
+    """
     sol.routes[k1][i], sol.routes[k2][j] = sol.routes[k2][j], sol.routes[k1][i]
 
 
 
-#        4. CALCUL DU DELTA-COST RAPIDE (wrapper)
+# Fonctions de calcul de Delta-Cost (Delta)
 
-def delta_cost(sol, move_type, *args):
-    if move_type == "two_opt":   return delta_two_opt(sol, *args)
-    if move_type == "relocate":  return delta_relocate(sol, *args)
-    if move_type == "swap":      return delta_swap(sol, *args)
+# 2. RELOCATE (déplacer un client)
+
+def delta_relocate(sol: Solution, instance: Instance, k1: int, i: int, k2: int, j: int) -> float:
+    """
+    Calcule le changement de coût résultant du déplacement du client 
+    à l'index i de la route k1 vers la position j de la route k2.
+    """
+    r1, r2 = sol.routes[k1], sol.routes[k2]
+    c = instance.distance_matrix
+    Q = instance.capacity
+    q = instance.demand
+
+    u = r1[i]
+    
+    # Vérification de la contrainte de capacité pour un déplacement inter-route
+    if k1 != k2:
+        current_demand_r2 = sum(q[x] for x in r2)
+        if current_demand_r2 + q[u] > Q: 
+            return math.inf
+
+    # Suppression dans la route k1 (a1->u->b1 remplacé par a1->b1)
+    a1 = 0 if i == 0 else r1[i-1]
+    b1 = 0 if i == len(r1)-1 else r1[i+1] 
+    
+    # Coût retiré : -(a1->u) - (u->b1) + (a1->b1)
+    rm = -c[a1][u] - c[u][b1] + c[a1][b1]
+    
+    # Insertion dans la route k2 (a2->b2 remplacé par a2->u->b2)
+    a2 = 0 if j == 0 else r2[j-1]
+    b2 = 0 if j == len(r2) else r2[j] # j == len(r2) est l'insertion avant le dépôt final
+    
+    # Coût inséré : -(a2->b2) + (a2->u) + (u->b2)
+    ins = -c[a2][b2] + c[a2][u] + c[u][b2]
+    
+    return rm + ins
+
+# 3. SWAP (échange de deux clients)
+
+def delta_swap(sol: Solution, instance: Instance, k1: int, i: int, k2: int, j: int) -> float:
+    """
+    Calcule le changement de coût résultant de l'échange du client 
+    à l'index i de la route k1 (u) avec le client à l'index j de la route k2 (v).
+    """
+    c = instance.distance_matrix
+    Q = instance.capacity
+    q = instance.demand
+    r1, r2 = sol.routes[k1], sol.routes[k2]
+    
+    u, v = r1[i], r2[j]
+    
+    # Vérification de l'opération (swap d'un élément avec lui-même est inutile)
+    if k1 == k2 and i == j:
+        return math.inf
+        
+    # Vérification des contraintes de capacité pour un échange inter-route
+    if k1 != k2:
+        # Route k1: retire u, ajoute v
+        if sum(q[x] for x in r1) - q[u] + q[v] > Q: 
+            return math.inf
+            
+        # Route k2: retire v, ajoute u
+        if sum(q[x] for x in r2) - q[v] + q[u] > Q: 
+            return math.inf
+
+    # Arcs autour de u dans r1
+    a1 = 0 if i == 0 else r1[i-1]
+    b1 = 0 if i == len(r1)-1 else r1[i+1]
+    
+    # Arcs autour de v dans r2
+    a2 = 0 if j == 0 else r2[j-1]
+    b2 = 0 if j == len(r2)-1 else r2[j+1]
+
+    # Cas spécial: u et v sont voisins sur la même route (k1=k2 et |i-j|=1)
+    if k1 == k2 and abs(i - j) == 1:
+        if i > j: # Assurer i est le premier
+            i, j = j, i
+            u, v = v, u
+            a1, a2 = a2, a1
+            b1, b2 = b2, b1
+            
+        
+        old = c[a1][u] + c[u][v] + c[v][b2]
+        new = c[a1][v] + c[v][u] + c[u][b2]
+        
+    else:
+        # Cas général : arcs disjoints (ou k1 != k2)
+        old = c[a1][u] + c[u][b1] + c[a2][v] + c[v][b2]
+        new = c[a1][v] + c[v][b1] + c[a2][u] + c[u][b2]
+
+    return new - old
+
+# 4. CALCUL DU DELTA-COST RAPIDE (wrapper)
+
+def delta_cost(sol: Solution, instance: Instance, move_type: str, *args) -> float:
+    """
+    Wrapper pour calculer le delta_cost en fonction du type de mouvement.
+    
+    NOTE: Pour le "two_opt", la fonction doit être importée d'ailleurs (e.g., evaluation.py).
+    """
+    # La fonction delta_relocate attend 4 arguments: k1, i, k2, j
+    if move_type == "relocate":  
+        if len(args) != 4: return math.inf
+        return delta_relocate(sol, instance, *args)
+        
+    # La fonction delta_swap attend 4 arguments: k1, i, k2, j
+    if move_type == "swap":      
+        if len(args) != 4: return math.inf
+        return delta_swap(sol, instance, *args)
+        
+    
     return math.inf
-
-
-
-#         5. RECHERCHE LOCALE AVEC VOISINAGE
-
-def local_search(sol):
-    """
-    Applique itérativement les mouvements Two-Opt, Relocate et Swap
-    tant qu'une amélioration de la fonction objectif F est trouvée.
-    """
-    improved = True
-    iteration = 0
-
-    while improved:
-        improved = False
-        best_delta = 0
-        best_move = None
-        iteration += 1
-
-        #  Parcours de tous les véhicules 
-        for k1 in range(sol.K):
-            r1 = sol.routes[k1]
-
-            #  (1) TWO-OPT sur la même tournée 
-            for i in range(len(r1)-1):
-                for j in range(i+1, len(r1)):
-                    Δ = delta_two_opt(sol, k1, i, j)
-                    if Δ < best_delta:
-                        best_delta, best_move = Δ, ("two_opt", k1, i, j)
-
-            #  (2) RELOCATE intra- et inter-tournées 
-            for i in range(len(r1)):
-                for k2 in range(sol.K):
-                    r2 = sol.routes[k2]
-                    for j in range(len(r2)+1):
-                        Δ = delta_relocate(sol, k1, i, k2, j)
-                        if Δ < best_delta:
-                            best_delta, best_move = Δ, ("relocate", k1, i, k2, j)
-
-            #  (3) SWAP intra- et inter-tournées
-            for i in range(len(r1)):
-                for k2 in range(sol.K):
-                    r2 = sol.routes[k2]
-                    for j in range(len(r2)):
-                        Δ = delta_swap(sol, k1, i, k2, j)
-                        if Δ < best_delta:
-                            best_delta, best_move = Δ, ("swap", k1, i, k2, j)
-
-        #  Application du meilleur move trouvé 
-        if best_move:
-            mv = best_move
-            if mv[0] == "two_opt":   apply_two_opt(sol, mv[1], mv[2], mv[3])
-            if mv[0] == "relocate":  apply_relocate(sol, mv[1], mv[2], mv[3], mv[4])
-            if mv[0] == "swap":      apply_swap(sol, mv[1], mv[2], mv[3], mv[4])
-            improved = True
-            print(f"Iter {iteration}: {mv[0]} {mv[1:]} -> Δ={best_delta:.2f}, Nouveau coût = {sol.cost():.2f}")
-
-    print("Aucune amélioration trouvée — solution locale atteinte.")
-    return sol
