@@ -4,6 +4,7 @@ from typing import List
 from .contracts import Instance, Solution
 from .evaluation import check_feasibility, evaluate_solution
 
+
 Route = List[int]
 
 def build_clarke_wright_solution(instance: Instance) -> Solution:
@@ -40,3 +41,5 @@ def build_clarke_wright_solution(instance: Instance) -> Solution:
     solution = Solution(routes=routes)
     evaluate_solution(solution, instance)
     return solution
+
+
