@@ -6,6 +6,10 @@ from dataclass import dataclass
 from copy import deepcopy
 from enum import Enum
 from typing import List, Tuple, Optional, Dict
+# Importation des modules artificiels 
+from .contracts import Instance, Solution, Route 
+from .evaluation import evaluate_solution, check_feasibility, compute_route_cost, delta_cost_two_opt
+
 
 
 #=========================================================================================================
@@ -13,277 +17,269 @@ from typing import List, Tuple, Optional, Dict
 #===========================================================================================================
 class ALNS:
     """
-    Classe ALNS (Partie 6: métaheuristique adaptive ; destroy/repair itératif avec adaptation poids).
-    Explore vaste voisinage via destruction partielle + reconstruction, VND local, shake diversification.
-    Conforme notebook Section 3: robuste pour contraintes complexes (TW/cap/N_max/K_max).
-    Pré: instance + initial_sol ; post: best_solution améliorée après run.
-    
-    Attributs:
-        instance (Instance): Données/problème.
-        destroy_operators/repair_operators (Dict[MoveType,float]): Poids (init 1.0 ; adapt via scores).
-        current_solution/best_solution (Solution): Courante/meilleure (update si < best).
-        weights_history (Dict[MoveType,List[float]]): Scores récents (0/1 feasible/amélioration).
-        penalty (float): Dynamique (augmente stagnation, diminue succès ; gère infaisable).
-        no_improvement (int): Compteur (pour shake si >= LIMIT).
-    
-    Méthodes: run_iteration (full loop), destroy/repair (opérateurs), accept (critère), VND (local),
-    shake (diversif), adapt_weights (update alpha*moyenne).
-    Complexité itération: O(n^2) approx (destroy O(n*fraction), repair O(n^2), VND O(k*n)).
+    ALNS adaptative (Partie 6) ; utilise evaluate_solution/check_feasibility.
+    Attributs: destroy/repair_operators (poids), current/best (Solution), history (scores),
+    penalty (dynamique), no_improvement (stagnation).
+    Méthodes: destroy/repair (mods routes + éval), accept (sur cost/feasible), VND (candidats),
+    shake (relocates), adapt (poids EMA), run_iteration (full).
+    Complexité itér: O(n^2).
     """
     def __init__(self, instance: Instance, initial_solution: Solution):
         """
-        Init ALNS (Partie 6: setup). Copie initiale en current/best ; poids uniformes ; penalty init.
-        Pré: initial feasible/partielle ; post: prête pour itérations.
-        Complexité: O(taille initial) - copies.
+        Init (Partie 6) ; copie initial (Solution.copy()), poids=1.0, penalty=1000, no_improv=0.
+        Complexité: O(taille initial).
         """
-        self.instance = instance  # Réf problème
-        self.destroy_operators = {mt: 1.0 for mt in MoveType}  # Poids destroy (roulette)
-        self.repair_operators = {mt: 1.0 for mt in MoveType}  # Poids repair
-        self.current_solution = initial_solution.copy()  # Courante (mutable)
-        self.best_solution = initial_solution.copy()  # Meilleure (backup)
-        self.weights_history = {mt: [] for mt in MoveType}  # Historique scores (append 0/1)
-        self.penalty = PENALTY_FACTOR  # Init pénalité (ajustable)
-        self.no_improvement = 0  # Compteur stagnation
+        self.instance = instance
+        self.destroy_operators = {mt: 1.0 for mt in MoveType}
+        self.repair_operators = {mt: 1.0 for mt in MoveType}
+        self.current_solution = initial_solution.copy()
+        self.best_solution = initial_solution.copy()
+        self.weights_history = {mt: [] for mt in MoveType}
+        self.penalty = PENALTY_FACTOR
+        self.no_improvement = 0
+        evaluate_solution(self.current_solution, instance)  # Ensure updated
+        evaluate_solution(self.best_solution, instance)
 
     def destroy(self, fraction: float = SEGMENT_SIZE) -> Solution:
         """
-        Destruction (Partie 6: partielle ; remove ~fraction*n clients aléatoirement de routes).
-        Sélection opérateur via roulette (poids cum ; random.uniform(0,total_weight)).
-        Simule relocate inverse (remove set random clients ; pop route si vide [0,0]).
-        Score: 1 si post feasible (rare). Complexité: O(n*fraction) - sample + remove loops.
+        Destruction (Partie 6) ; roulette opérateur, remove fraction*|Vc| clients aléa.
+        Pop [0,0] ; evaluate_solution post. Score history (1 si feasible post, rare).
+        Complexité: O(n*fraction).
         """
-        # Roulette pour opérateur (adaptatif ; cf. Partie 6)
-        total_weight = sum(self.destroy_operators.values())  # Somme poids
-        rand = random.uniform(0, total_weight)  # Tirage [0, total)
-        cum_weight = 0.0  # Cumul progressif
-        selected_op = None  # Op sélectionné
-        for op, weight in self.destroy_operators.items():  # Parcours dict
-            cum_weight += weight  # + poids courant
-            if rand <= cum_weight:  # Dans segment ? → sélection
-                selected_op = op
-                break  # Arrêt
-        
-        # Destruction: sample clients à remove
-        destroyed_sol = self.current_solution.copy()  # Copie pour mod
-        num_to_destroy = int(fraction * self.instance.n)  # Nb ~ fraction*n
-        all_clients = list(self.instance.Vc)  # Tous clients
-        to_destroy = set(random.sample(all_clients, min(num_to_destroy, len(all_clients))))  # Set aléatoire
-        
-        for client in to_destroy:  # Boucle remove
-            removed = False  # Flag
-            for route_idx in range(len(destroyed_sol.routes)):  # Parcours routes
-                route = destroyed_sol.routes[route_idx]  # Courante
-                if client in route.sequence[1:-1]:  # Client dans internals ?
-                    route.sequence.remove(client)  # Remove (O(len) list)
-                    removed = True
-                    # Vide ? [0,0] → pop (inutile)
-                    if len(route.sequence) == 2 and route.sequence == [0, 0]:
-                        destroyed_sol.routes.pop(route_idx)  # Supprime (index ajusté)
-                    break  # Client removed
-            if not removed:
-                print(f"Attention: Client {client} non trouvé pour destruction.")  # Log rare
-        
-        destroyed_sol.compute_total_cost(self.instance)  # Update F/feasible post-remove
-        # Score historique (1 feasible post-destroy ; pour adapt)
-        score = 1.0 if destroyed_sol.is_feasible else 0.0
-        self.weights_history[selected_op].append(score)  # Append list
-        
-        return destroyed_sol  # Partielle (unassigned)
-
-    def repair(self, destroyed_sol: Solution) -> Solution:
-        """
-        Reconstruction (Partie 6: réinsère unassigned via glouton time-aware ; tri e_i).
-        Sélection opérateur roulette (comme destroy). Meilleure pos: min delta_approx (arcs affectés)
-        si feasible (is_feasible_route). Nouvelle route si possible. Score: 1 si feasible ET < current.
-        Complexité: O(|unassigned| * |routes| * avg_len) ~ O(n^2) - scan pos/feasible.
-        """
-        # Roulette repair (adaptatif)
-        total_weight = sum(self.repair_operators.values())
+        total_weight = sum(self.destroy_operators.values())
         rand = random.uniform(0, total_weight)
-        cum_weight = 0.0
+        cum = 0.0
         selected_op = None
-        for op, weight in self.repair_operators.items():
-            cum_weight += weight
-            if rand <= cum_weight:
+        for op, w in self.destroy_operators.items():
+            cum += w
+            if rand <= cum:
                 selected_op = op
                 break
-        
-        # Unassigned (set diff Vc - covered)
-        unassigned = set(self.instance.Vc) - destroyed_sol.covered_clients
-        repaired = destroyed_sol.copy()  # Base
-        
-        for client in sorted(unassigned, key=lambda i: self.instance.e[i]):  # Tri time-aware (e_i croissant)
-            # Meilleure insertion (min delta approx)
-            best_delta = float('inf')  # Init max
-            best_r_idx, best_pos = -1, -1  # Meilleurs
-            for r_idx, route in enumerate(repaired.routes):  # Parcours routes
-                for pos in range(1, len(route.sequence)):  # Pos (1..len-1)
-                    # Temp seq insert
-                    temp_seq = route.sequence[:pos] + [client] + route.sequence[pos:]
-                    temp_r = Route(sequence=temp_seq)
-                    if self.instance.is_feasible_route(temp_r):  # Vérif (TW/Q/etc.)
-                        # Delta approx (Partie 4: incrémental ; arcs affectés seulement)
-                        prev_n = route.sequence[pos-1]  # Précédent pos
-                        next_n = route.sequence[pos] if pos < len(route.sequence)-1 else 0  # Suivant (0 si fin)
-                        old_arc = self.instance.c[prev_n][next_n]  # Ancien arc coût
-                        new_arcs = self.instance.c[prev_n][client] + self.instance.c[client][next_n]  # Nouveaux 2 arcs
-                        delta_approx = new_arcs - old_arc  # Gain (négatif=bon ; ignore TW/charge via feasible)
-                        if delta_approx < best_delta:  # Mieux ?
-                            best_delta = delta_approx
-                            best_r_idx, best_pos = r_idx, pos  # Update
-            
-            # Insertion si trouvée
-            if best_r_idx != -1:
-                repaired.routes[best_r_idx].sequence.insert(best_pos, client)  # In-place
-            else:  # Nouvelle route
-                if len(repaired.routes) < self.instance.K_max:
-                    new_r = Route(sequence=[0, client, 0])
-                    if self.instance.is_feasible_route(new_r):
-                        repaired.routes.append(new_r)  # Ajout
-                    else:
-                        print(f"Client {client} non réinséré (nouvelle route infaisable).")  # Log
-                else:
-                    print(f"Client {client} non réinséré (K_max atteint).")  # Log
-        
-        repaired.compute_total_cost(self.instance)  # Update global
-        # Score (1 si feasible ET amélioration ; pour adapt)
-        score = 1.0 if (repaired.is_feasible and repaired.total_cost < self.current_solution.total_cost) else 0.0
+        destroyed = self.current_solution.copy()
+        num_destroy = int(fraction * (len(self.instance.demand) - 1))
+        clients = list(range(1, len(self.instance.demand)))
+        to_remove = set(random.sample(clients, min(num_destroy, len(clients))))
+        for client in to_remove:
+            removed = False
+            for r_idx in range(len(destroyed.routes)):
+                route = destroyed.routes[r_idx]
+                if client in route[1:-1]:
+                    destroyed.routes[r_idx] = route[:route.index(client)] + route[route.index(client)+1:]
+                    removed = True
+                    if len(destroyed.routes[r_idx]) == 2 and destroyed.routes[r_idx] == [0, 0]:
+                        destroyed.routes.pop(r_idx)
+                    break
+            if not removed:
+                print(f"Client {client} non trouvé.")
+        evaluate_solution(destroyed, self.instance)
+        score = 1.0 if destroyed.feasible else 0.0
         self.weights_history[selected_op].append(score)
-        
-        return repaired  # Réparée
+        return destroyed
+
+    def repair(self, destroyed: Solution) -> Solution:
+        """
+        Repair (Partie 6) ; roulette opérateur, réinsère unassigned (tri ready_time).
+        Meilleure pos: min delta approx si check_feasible ; nouvelle si <Kmax.
+        evaluate_solution post. Score: 1 si feasible et cost < current.
+        Complexité: O(n^2).
+        """
+        total_weight = sum(self.repair_operators.values())
+        rand = random.uniform(0, total_weight)
+        cum = 0.0
+        selected_op = None
+        for op, w in self.repair_operators.items():
+            cum += w
+            if rand <= cum:
+                selected_op = op
+                break
+        # Unassigned: Vc - couverts (approx via routes)
+        unassigned = set(range(1, len(self.instance.demand)))
+        for route in destroyed.routes:
+            unassigned -= set(route[1:-1])
+        unassigned = sorted(unassigned, key=lambda i: self.instance.ready_time[i] if self.instance.ready_time else 0)
+        repaired = destroyed.copy()
+        for client in unassigned:
+            best_delta = float('inf')
+            best_r, best_pos = -1, -1
+            for r_idx, route in enumerate(repaired.routes):
+                for pos in range(1, len(route)):
+                    temp = route[:pos] + [client] + route[pos:]
+                    if check_feasibility(temp, self.instance):
+                        prev = route[pos-1]
+                        next_ = route[pos] if pos < len(route)-1 else 0
+                        old = self.instance.distance_matrix[prev][next_]
+                        new_ = self.instance.distance_matrix[prev][client] + self.instance.distance_matrix[client][next_]
+                        d_approx = new_ - old
+                        if d_approx < best_delta:
+                            best_delta = d_approx
+                            best_r, best_pos = r_idx, pos
+            if best_r != -1:
+                repaired.routes[best_r] = repaired.routes[best_r][:best_pos] + [client] + repaired.routes[best_r][best_pos:]
+            else:
+                if len(repaired.routes) < (self.instance.Kmax or len(self.instance.demand)-1):
+                    new_r = [0, client, 0]
+                    if check_feasibility(new_r, self.instance):
+                        repaired.routes.append(new_r)
+                    else:
+                        print(f"Client {client} non réinséré (nouvelle infaisable).")
+                else:
+                    print(f"Client {client} non réinséré (Kmax).")
+        evaluate_solution(repaired, self.instance)
+        score = 1.0 if (repaired.feasible and repaired.cost < self.current_solution.cost) else 0.0
+        self.weights_history[selected_op].append(score)
+        return repaired
 
     def accept_solution(self, new_sol: Solution) -> bool:
         """
-        Acceptation (Partie 6: critère). Règles: Toujours si feasible ET < current ; sinon pénalité
-        si !feasible (cost += penalty), accept si < current ; sinon Metropolis exp(-delta/T) T=100.
-        Pré: new_sol candidate ; post: True si accept (update current).
-        Complexité: O(1) - maths simples.
+        Accept (Partie 6) ; hiérarchique: feasible & cost<current → true ; +penalty si !feasible & <current → true ;
+        sinon Metropolis exp(-Δ/T) T=100.
+        Complexité: O(1).
         """
-        if new_sol.is_feasible and new_sol.total_cost < self.current_solution.total_cost:
-            return True  # Amélioration stricte (feasible)
-        
-        # Pénalité si infaisable (Partie 6: gère temporaire)
-        candidate_cost = new_sol.total_cost
-        if not new_sol.is_feasible:
-            candidate_cost += self.penalty  # + dynamique
-        
-        if candidate_cost < self.current_solution.total_cost:
-            return True  # Amélioration pénalisée
-        
-        # Probabiliste diversification (Metropolis-like ; T=100 fixe)
-        delta = candidate_cost - self.current_solution.total_cost  # Positif = pire
-        prob = np.exp(-delta / 100.0)  # Prob accept (décroît avec delta)
-        return random.random() < prob  # Tirage < prob ?
+        if new_sol.feasible and new_sol.cost < self.current_solution.cost:
+            return True
+        cand_cost = new_sol.cost
+        if not new_sol.feasible:
+            cand_cost += self.penalty
+        if cand_cost < self.current_solution.cost:
+            return True
+        delta = cand_cost - self.current_solution.cost
+        prob = np.exp(-delta / 100.0)
+        return random.random() < prob
 
     def vnd_local_search(self, init_sol: Solution) -> Solution:
         """
-        VND (Partie 6: descente voisinage variable ; séquentiel two→relocate→swap jusqu'à local opt).
-        Accepte delta<0 ou aspiration (!feasible mais < best). Évite cycles: 1 move/type, break si improved.
-        Pré: init_sol ; post: local_sol améliorée. Complexité: O(iters * k * n) ~ O(n^2) (k=5 petit).
+        VND (Partie 6.2) ; ordre two→relocate→swap ; accepte delta<0 ou aspiration (feasible & cost<best).
+        1 move/type ; while improved.
+        Complexité: O(iters * k * |routes|).
         """
-        local_sol = init_sol.copy()  # Base
-        improved = True  # Flag loop
-        neighborhood_order = [MoveType.TWO_OPT, MoveType.RELOCATE, MoveType.SWAP]  # Ordre séquentiel
-        
-        while improved:  # Tant amélioration
-            improved = False  # Reset
-            for mt in neighborhood_order:  # Parcours voisinages
-                candidates = generate_candidates(local_sol, self.instance, mt, k=5)  # 5 aléatoires
-                for cand_sol, delta in candidates:  # Meilleurs first (trié)
-                    # Aspiration: même infaisable si < best global (Partie 6)
-                    aspiration = (cand_sol.is_feasible and cand_sol.total_cost < self.best_solution.total_cost)
-                    if delta < 0 or aspiration:  # Accepte
-                        local_sol = cand_sol.copy()  # Update
-                        local_sol.compute_total_cost(self.instance)  # Recompute
-                        improved = True  # Flag
-                        break  # 1 move/type (évite cycles)
-                if improved:  # Si move, break pour new tour
-                    break  # Nouveau while
-        
-        return local_sol  # Local opt
+        local = init_sol.copy()
+        improved = True
+        order = [MoveType.TWO_OPT, MoveType.RELOCATE, MoveType.SWAP]
+        while improved:
+            improved = False
+            for mt in order:
+                cands = generate_candidates(local, self.instance, mt, k=5)
+                for cand_sol, delta in cands:
+                    aspiration = cand_sol.feasible and cand_sol.cost < self.best_solution.cost
+                    if delta < 0 or aspiration:
+                        local = cand_sol.copy()
+                        evaluate_solution(local, self.instance)
+                        improved = True
+                        break
+                if improved:
+                    break
+        return local
 
     def shake_solution(self) -> Solution:
         """
-        Shake diversification (Partie 6: si stagnation >= LIMIT, 2-5 relocates random pour perturber).
-        Reset no_improvement. Pré: stagnation ; post: shaken diversifiée.
-        Complexité: O(num_shakes * |routes|) - relocates.
+        Shake (Partie 6.3) ; si stagnation, 2-5 relocates random ; reset no_improv.
+        Complexité: O(num * |routes|).
         """
-        if self.no_improvement < NO_IMPROVEMENT_LIMIT:  # Pas stagnation
-            return self.current_solution.copy()  # No-op
-        
-        num_shakes = random.randint(2, 5)  # Nb perturbations (2-5)
-        shaken = self.current_solution.copy()  # Base
-        print(f"Shake: {num_shakes} relocates random pour diversification.")  # Log
-        
-        for _ in range(num_shakes):  # Boucle shakes
-            candidates = generate_candidates(shaken, self.instance, MoveType.RELOCATE, k=1)  # 1 random relocate
-            if candidates:  # Si valide
-                shaken = candidates[0][0].copy()  # Applique premier
-                shaken.compute_total_cost(self.instance)  # Update
-        
-        self.no_improvement = 0  # Reset compteur
-        return shaken  # Diversifiée
+        if self.no_improvement < NO_IMPROVEMENT_LIMIT:
+            return self.current_solution.copy()
+        num = random.randint(2, 5)
+        shaken = self.current_solution.copy()
+        print(f"Shake: {num} relocates.")
+        for _ in range(num):
+            cands = generate_candidates(shaken, self.instance, MoveType.RELOCATE, k=1)
+            if cands:
+                shaken = cands[0][0].copy()
+                evaluate_solution(shaken, self.instance)
+        self.no_improvement = 0
+        return shaken
 
     def adapt_weights(self):
         """
-        Adaptation dynamique (Partie 6: update poids = (1-alpha)*old + alpha*mean(scores[-10:])*boost).
-        Boost=10 pour sensibilité ; trim history à 10 (fenêtre glissante). Alpha=0.1.
-        Pré: history appends ; post: poids mis à jour (favorise bons opérateurs).
-        Complexité: O(3*10) = O(1) - |MoveType|=3.
+        Adapt (Partie 6) ; EMA mean(last 10 scores)*10 ; trim 10.
+        Complexité: O(1).
         """
-        recent_window = 10  # Fenêtre moyenne (dernières 10 uses)
-        for op in MoveType:  # Par type
-            history = self.weights_history[op]  # List scores
-            if len(history) >= recent_window:  # Suffisant ?
-                avg_score = np.mean(history[-recent_window:])  # Moyenne récente (0/1)
-                # Update destroy (formule EMA-like)
-                self.destroy_operators[op] = (
-                    (1 - WEIGHT_UPDATE) * self.destroy_operators[op] +  # Héritage old
-                    WEIGHT_UPDATE * avg_score * 10  # + boost mean (sensibilité)
-                )
-                # Même pour repair
-                self.repair_operators[op] = (
-                    (1 - WEIGHT_UPDATE) * self.repair_operators[op] +
-                    WEIGHT_UPDATE * avg_score * 10
-                )
-                # Trim (garde dernières 10)
-                self.weights_history[op] = history[-recent_window:]
+        window = 10
+        for op in MoveType:
+            hist = self.weights_history[op]
+            if len(hist) >= window:
+                avg = np.mean(hist[-window:])
+                self.destroy_operators[op] = (1 - WEIGHT_UPDATE) * self.destroy_operators[op] + WEIGHT_UPDATE * avg * 10
+                self.repair_operators[op] = (1 - WEIGHT_UPDATE) * self.repair_operators[op] + WEIGHT_UPDATE * avg * 10
+                self.weights_history[op] = hist[-window:]
 
     def run_iteration(self) -> bool:
         """
-        Itération ALNS complète (Partie 6: destroy→repair→accept→VND→update→shake?→adapt).
-        Retourne True si best améliorée (réduit penalty). Complexité: O(n^2).
+        Itér ALNS (Partie 6) ; destroy→repair→accept/VND→update→shake?→adapt.
+        True si best améliorée.
+        Complexité: O(n^2).
         """
-        # 1. Destroy partiel
-        destroyed = self.destroy()  # Remove fraction
-        
-        # 2. Repair
-        candidate = self.repair(destroyed)  # Réinsère
-        
-        # 3. Accept + VND si OK
-        if self.accept_solution(candidate):  # Critère
-            improved_sol = self.vnd_local_search(candidate)  # Local improve
-            improved_sol.compute_total_cost(self.instance)  # Update
-            self.current_solution = improved_sol  # Set courant
-            
-            # 4. Update best (seulement feasible < best ; Partie 7)
-            if (improved_sol.is_feasible and
-                improved_sol.total_cost < self.best_solution.total_cost):
-                self.best_solution = improved_sol.copy()  # Backup
-                self.no_improvement = 0  # Reset
-                self.penalty *= 0.99  # Réduit pénalité (plus de feasible)
-                return True  # Amélioration
-        
+        destroyed = self.destroy()
+        candidate = self.repair(destroyed)
+        if self.accept_solution(candidate):
+            improved = self.vnd_local_search(candidate)
+            evaluate_solution(improved, self.instance)
+            self.current_solution = improved
+            if improved.feasible and improved.cost < self.best_solution.cost:
+                self.best_solution = improved.copy()
+                self.no_improvement = 0
+                self.penalty *= 0.99
+                return True
             else:
-                self.no_improvement += 1  # + stagnation
-                if self.no_improvement % 10 == 0:  # Tous 10
-                    self.penalty *= 1.1  # Augmente (pousse feasible)
-        
-        # 5. Shake si stagnation extrême
+                self.no_improvement += 1
+                if self.no_improvement % 10 == 0:
+                    self.penalty *= 1.1
         if self.no_improvement >= NO_IMPROVEMENT_LIMIT:
-            self.current_solution = self.shake_solution()  # Diversif
-        
-        # 6. Adapt (poids)
+            self.current_solution = self.shake_solution()
         self.adapt_weights()
-        
-        return False  # Pas amélioration
+        return False
+
+
+
+#=========================================================================================================
+# FONCTION QUI GENERE K CANDIDATS 
+#===========================================================================================================
+def generate_candidates(solution: Solution, instance: Instance, move_type: MoveType, k: int = 10) -> List[Tuple[Solution, float]]:
+    """
+    Génère k candidats (Partie 5/6) ; tri delta croissant.
+    Two-opt: delta O(1) ; relocate/swap: full evaluate.
+    Complexité: O(k * |routes|^2).
+    """
+    candidates = []
+    routes = solution.routes
+    
+    if move_type == MoveType.TWO_OPT:
+        for _ in range(k):
+            if len(routes) == 0 or any(len(r) < 4 for r in routes):
+                continue
+            r_idx = random.randint(0, len(routes)-1)
+            route = routes[r_idx]
+            seq_len = len(route)
+            i = random.randint(1, seq_len-3)
+            j = random.randint(i+1, seq_len-2)
+            new_route, delta = two_opt_move(route, i, j, instance)
+            if delta < float('inf'):
+                new_sol = solution.copy()
+                new_sol.routes[r_idx] = new_route
+                evaluate_solution(new_sol, instance)  # Update pour cohérence
+                candidates.append((new_sol, delta))
+    
+    elif move_type == MoveType.RELOCATE:
+        for _ in range(k):
+            from_r = random.randint(0, len(routes)-1)
+            to_r = random.randint(0, len(routes)-1)
+            if from_r == to_r and len(routes[from_r]) < 3:
+                continue
+            from_p = random.randint(1, len(routes[from_r])-2)
+            to_p = random.randint(1, len(routes[to_r])-1)
+            new_sol, delta = relocate_move(solution, from_r, from_p, to_r, to_p, instance)
+            if delta < float('inf'):
+                candidates.append((new_sol, delta))
+    
+    elif move_type == MoveType.SWAP:
+        for _ in range(k):
+            r1 = random.randint(0, len(routes)-1)
+            r2 = random.randint(0, len(routes)-1)
+            if r1 == r2 or len(routes[r1]) < 3 or len(routes[r2]) < 3:
+                continue
+            p1 = random.randint(1, len(routes[r1])-2)
+            p2 = random.randint(1, len(routes[r2])-2)
+            new_sol, delta = swap_move(solution, r1, p1, r2, p2, instance)
+            if delta < float('inf'):
+                candidates.append((new_sol, delta))
+    
+    return sorted(candidates, key=lambda x: x[1])[:k]
