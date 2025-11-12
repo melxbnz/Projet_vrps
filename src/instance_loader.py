@@ -4,8 +4,8 @@ import vrplib
 #from notre_solveur import fonction_solve # On importe notre solveur
 
 # On prends une instance (Il faut définir le bon chemin)
-instance = vrplib.read_instance("C101.txt", instance_format="solomon")
-solution = vrplib.read_solution("C101.sol")
+instance = vrplib.read_instance("../data/C101.txt", instance_format="solomon")
+solution = vrplib.read_solution("../data/C101.sol")
 print("Nom de l'instance : ",instance['name'])
 #Exécution de la fonction solve
 # my_solution = fonction_solve(instance)
