@@ -24,15 +24,28 @@ def load_instance(name_instance: str) -> tuple[Instance, Solution]:
             for i in range(n)
         ]
 
+        
+    time_windows = data.get("time_window", None)
+    ready_time, due_time = None, None
+    
+    if time_windows is not None:
+        time_windows = time_windows.tolist() if hasattr(time_windows, "tolist") else time_windows
+        ready_time = [tw[0] for tw in time_windows]
+        due_time = [tw[1] for tw in time_windows]
+        
+    service_time=data.get("service_time", None)
+    if service_time is not None and hasattr(service_time, "tolist"):
+        service_time = service_time.tolist()
+    
     # Création de l'objet Instance 
     instance = Instance(
         name=data["name"],
         distance_matrix=dist_matrix,
         demand=data["demand"],
         capacity=data["capacity"],
-        ready_time=data.get("time_window", [None] * len(data["demand"]))[0],
-        due_time=data.get("time_window", [None] * len(data["demand"]))[1] if "time_window" in data else None,
-        service_time=data.get("service_time", None),
+        ready_time=ready_time,
+        due_time=due_time,
+        service_time=service_time,
         Kmax=data.get("vehicles", []) if "vehicles" in data else None,
     )
 
