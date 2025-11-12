@@ -63,12 +63,13 @@ def verif_fenetre_temps(route, coords, debut, fin, service, D):
 
 def clarke_wright(instance):
     # On extrait les données de l’instance VRPLIB
-    coords = instance["coordonnées"]   # coordonnées des clients
-    demandes = instance["demandes"]    # demande de chaque client
-    debut = instance["tot"]       # début fenêtre
-    fin = instance["tard"]           # fin fenêtre
-    service = instance["service"]      # durée de service
-    capacite = instance["capacite"]    # capacité du véhicule
+    coords = instance["node_coord"]   # coordonnées des clients
+    demandes = instance["demand"]    # demande de chaque client
+    time_window = instance["time_window"] 
+    debut = [tw[0] for tw in time_window]
+    fin   = [tw[1] for tw in time_window]
+    service = instance["service_time"]      # durée de service
+    capacite = instance["capacity"]    # capacité du véhicule
 
     n = len(coords)
 
@@ -127,6 +128,7 @@ def clarke_wright(instance):
 
     return routes
 
-instance = vrplib.read_instance("C101.txt")
+instance = vrplib.read_instance("C101.txt", instance_format="solomon")
 sol = clarke_wright(instance)
 print(sol)
+
