@@ -4,7 +4,6 @@
 """
 Module pour le chargement des instances (Étape 2).
 Lit les fichiers .txt format Solomon et retourne un objet Instance.
-[VERSION CORRIGÉE]
 """
 
 import math
