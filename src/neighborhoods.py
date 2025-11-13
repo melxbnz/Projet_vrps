@@ -253,7 +253,7 @@ if __name__ == "__main__":
     """
     Section de tests exécutable via : python -m src.neighborhoods
     """
-    print("🚀 Lancement des tests rapides pour src/neighborhoods.py...")
+    print(" Lancement des tests rapides pour src/neighborhoods.py...")
     import sys
     import math
 
@@ -262,7 +262,7 @@ if __name__ == "__main__":
         from src.contracts import Instance, Solution
         from src.evaluation import evaluate_solution
     except ImportError:
-        print("❌ ÉCHEC: Impossible d'importer 'src.contracts' ou 'src.evaluation'.")
+        print(" ÉCHEC: Impossible d'importer 'src.contracts' ou 'src.evaluation'.")
         print("   Assurez-vous d'être à la racine 'Projet_vrp' et de lancer avec 'python -m ...'")
         sys.exit(1)
 
@@ -315,10 +315,10 @@ if __name__ == "__main__":
         print(f"Nouveau coût (attendu): {cost_new_attendu:.2f}")
         
         assert math.isclose(cost_new_reel, cost_new_attendu), "Delta Relocate est INCOHÉRENT"
-        print("✅ Delta Relocate cohérent.")
+        print(" Delta Relocate cohérent.")
 
     except Exception as e:
-        print(f"❌ ÉCHEC: Erreur lors du test Relocate: {e}")
+        print(f" ÉCHEC: Erreur lors du test Relocate: {e}")
 
     # --- 2. Test Swap ---
     print("\n--- Test 2: Swap (client 1 <-> client 3) ---")
@@ -341,9 +341,9 @@ if __name__ == "__main__":
         print(f"Nouveau coût (attendu): {cost_new_attendu:.2f}")
 
         assert math.isclose(cost_new_reel, cost_new_attendu), "Delta Swap est INCOHÉRENT"
-        print("✅ Delta Swap cohérent.")
+        print(" Delta Swap cohérent.")
         
     except Exception as e:
-        print(f"❌ ÉCHEC: Erreur lors du test Swap: {e}")
+        print(f" ÉCHEC: Erreur lors du test Swap: {e}")
 
-    print("\n🎉 Tous les tests de voisinages ont réussi!")
+    print("\n Tous les tests de voisinages ont réussi!")
