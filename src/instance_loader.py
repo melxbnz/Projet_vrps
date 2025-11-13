@@ -9,8 +9,8 @@ from typing import Dict, Optional
 
 def load_instance(name_instance: str) -> tuple[Instance, Solution]:
     """Charge une instance Solomon (via vrplib) et renvoie des objets Instance et Solution."""
-    data = vrplib.read_instance(f"../data/{name_instance}.txt", instance_format="solomon")
-    sol_data = vrplib.read_solution(f"../data/{name_instance}.sol")
+    data = vrplib.read_instance(f"data/{name_instance}.txt", instance_format="solomon")
+    sol_data = vrplib.read_solution(f"data/{name_instance}.sol")
 
     # Construction de la matrice des distances 
     dist_matrix = data.get("edge_weight")
