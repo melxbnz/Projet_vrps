@@ -1,7 +1,50 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 import math
 from typing import List, Tuple
+import sys
 
-from contracts import Solution, Instance  # type: ignore
+# from contracts import Solution, Instance  # type: ignore
+
+# --- IMPORTS DE L'ARCHITECTURE ---
+try:
+    # 1. On importe les "Contrats"
+    from .contracts import Instance, Solution, Route
+    # 2. On importe le "Juge" (pour les deltas et la faisabilité)
+    # Note : delta_cost_two_opt est dans evaluation.py !
+    from .evaluation import check_feasibility, delta_cost_two_opt
+
+except ImportError:
+    # ... (Stubs de fallback pour les tests) ...
+    print("Erreur: Impossible d'importer contracts/evaluation dans neighborhoods.py", file=sys.stderr)
+    from dataclasses import dataclass, field
+    from typing import Optional, Dict
+    NodeId = int
+    Route = List[NodeId]
+    @dataclass
+    class Instance:
+        name: str
+        distance_matrix: List[List[float]]
+        demand: List[int]
+        capacity: int
+        ready_time: Optional[List[float]] = None
+        due_time: Optional[List[float]] = None
+        service_time: Optional[List[float]] = None
+        Kmax: Optional[int] = None
+        Tmax: Optional[float] = None
+    @dataclass
+    class Solution:
+        routes: List[Route] = field(default_factory=list)
+        cost: float = float("inf")
+        feasible: bool = False
+        meta: Dict[str, float] = field(default_factory=dict)
+        def copy(self): import copy; return copy.deepcopy(self)
+
+    def check_feasibility(route: Route, instance: Instance) -> bool:
+        return sum(instance.demand[n] for n in route[1:-1]) <= instance.capacity
+    def delta_cost_two_opt(route: Route, i: int, j: int, dm: List[List[float]]) -> float:
+        return 1.0 # STUB
+
 
 # 1. TWO-OPT (inversion d’un segment [i..j])
 
@@ -202,3 +245,105 @@ def delta_cost(sol: Solution, instance: Instance, move_type: str, *args) -> floa
         return delta_swap(sol, instance, *args)
         
     return math.inf
+
+
+# --- [BLOC DE TEST CORRIGÉ] ---
+
+if __name__ == "__main__":
+    """
+    Section de tests exécutable via : python -m src.neighborhoods
+    """
+    print("🚀 Lancement des tests rapides pour src/neighborhoods.py...")
+    import sys
+    import math
+
+    # --- Dépendances de test ---
+    try:
+        from src.contracts import Instance, Solution
+        from src.evaluation import evaluate_solution
+    except ImportError:
+        print("❌ ÉCHEC: Impossible d'importer 'src.contracts' ou 'src.evaluation'.")
+        print("   Assurez-vous d'être à la racine 'Projet_vrp' et de lancer avec 'python -m ...'")
+        sys.exit(1)
+
+    # --- Données de test ---
+    DM_test = [
+        [0.0, 10.0, 10.0, 100.0, 100.0], # 0
+        [10.0, 0.0, 2.0, 100.0, 100.0], # 1
+        [10.0, 2.0, 0.0, 100.0, 100.0], # 2
+        [100.0, 100.0, 100.0, 0.0, 5.0],  # 3
+        [100.0, 100.0, 100.0, 5.0, 0.0]   # 4
+    ]
+    tiny_instance = Instance(
+        name="test_moves",
+        distance_matrix=DM_test,
+        demand=[0, 1, 1, 1, 1],
+        capacity=3
+    )
+    
+    # Solution de base: [0,1,2,0] (coût 22) et [0,3,4,0] (coût 205)
+    # Coût total = 227.0
+    sol_base = Solution(routes=[[0, 1, 2, 0], [0, 3, 4, 0]])
+    evaluate_solution(sol_base, tiny_instance)
+    cost_initial = sol_base.cost
+    
+    # --- [CORRECTION ICI] ---
+    assert math.isclose(cost_initial, 227.0)
+    print(f"Solution initiale (coût {cost_initial:.2f}) chargée.")
+
+    # --- 1. Test Relocate ---
+    print("\n--- Test 1: Relocate (move client 2 -> route 1) ---")
+    sol_test = sol_base.copy()
+    
+    # k1=0, i=2 (client 2)
+    # k2=1, j=1 (entre 0 et 3)
+    
+    try:
+        k1, i = 0, 2 
+        k2, j = 1, 1 
+
+        delta_calc = delta_relocate(sol_test, tiny_instance, k1, i, k2, j)
+        print(f"Delta (Relocate) calculé: {delta_calc:.2f}")
+
+        apply_relocate(sol_test, k1, i, k2, j)
+        
+        evaluate_solution(sol_test, tiny_instance)
+        cost_new_reel = sol_test.cost
+        print(f"Nouveau coût (réel): {cost_new_reel:.2f}")
+        
+        cost_new_attendu = cost_initial + delta_calc
+        print(f"Nouveau coût (attendu): {cost_new_attendu:.2f}")
+        
+        assert math.isclose(cost_new_reel, cost_new_attendu), "Delta Relocate est INCOHÉRENT"
+        print("✅ Delta Relocate cohérent.")
+
+    except Exception as e:
+        print(f"❌ ÉCHEC: Erreur lors du test Relocate: {e}")
+
+    # --- 2. Test Swap ---
+    print("\n--- Test 2: Swap (client 1 <-> client 3) ---")
+    sol_test = sol_base.copy()
+    
+    k1, i = 0, 1 
+    k2, j = 1, 1 
+    
+    try:
+        delta_calc = delta_swap(sol_test, tiny_instance, k1, i, k2, j)
+        print(f"Delta (Swap) calculé: {delta_calc:.2f}")
+
+        apply_swap(sol_test, k1, i, k2, j)
+        
+        evaluate_solution(sol_test, tiny_instance)
+        cost_new_reel = sol_test.cost
+        print(f"Nouveau coût (réel): {cost_new_reel:.2f}")
+        
+        cost_new_attendu = cost_initial + delta_calc
+        print(f"Nouveau coût (attendu): {cost_new_attendu:.2f}")
+
+        assert math.isclose(cost_new_reel, cost_new_attendu), "Delta Swap est INCOHÉRENT"
+        print("✅ Delta Swap cohérent.")
+        
+    except Exception as e:
+        print(f"❌ ÉCHEC: Erreur lors du test Swap: {e}")
+
+    print("\n🎉 Tous les tests de voisinages ont réussi!")
