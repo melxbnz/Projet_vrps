@@ -3,29 +3,19 @@
 
 """
 Module pour la boucle d'optimisation (Pilote ALNS).
-(Implémentation de l'Étape 7, version finale)
-
-Ce module agit comme un "pilote" (driver) :
-- Il initialise la métaheuristique (ex: ALNS).
-- Il gère la boucle principale (max_iter, patience).
-- Il collecte l'historique des coûts (current, best).
-- Il appelle l'itération de la métaheuristique (ex: alns.run_iteration()).
+(Implémentation de l'Étape 7, version finale avec logs de progression)
 """
 
 import random
 import copy
 import sys
-import numpy as np  # Requis par ALNS pour les probabilités
+import numpy as np
 from typing import List, Dict, Optional
 
-# Importation des contrats (la *seule* source de vérité)
+# --- Importation des contrats (la *seule* source de vérité) ---
 try:
     from .contracts import Instance, Solution
-    # On importe notre propre évaluateur (le "juge")
     from .evaluation import evaluate_solution
-    
-    # --- LA MODIFICATION CLÉ ---
-    # On importe la classe ALNS d'Olivier
     from .alns import ALNS
     
 except ImportError:
@@ -46,9 +36,7 @@ except ImportError:
         cost: float = float("inf")
         feasible: bool = False
         meta: Dict[str, float] = field(default_factory=dict)
-        def copy(self): return copy.deepcopy(self) # ALNS a besoin de .copy()
-    
-    # STUB pour la classe ALNS si elle n'est pas trouvée
+        def copy(self): return copy.deepcopy(self)
     class ALNS:
         def __init__(self, instance: Instance, initial_solution: Solution):
             print("Utilisation d'un ALNS STUB.")
@@ -57,18 +45,16 @@ except ImportError:
             self.best_solution.cost = initial_solution.cost
             self.best_solution.feasible = initial_solution.feasible
         def run_iteration(self) -> bool:
-            print("ALNS STUB: run_iteration()")
-            if self.best_solution.cost > 10:
-                self.best_solution.cost -= 10 # Simule une amélioration
-                self.current_solution.cost = self.best_solution.cost
-                return True # A amélioré
-            return False # N'a pas amélioré
-
+            return False
     def evaluate_solution(sol: Solution, instance: Instance) -> Solution:
         print("Utilisation d'un 'evaluate_solution' STUB.")
         sol.cost = 100.0
         sol.feasible = True
         return sol
+
+
+# --- [AJOUT] Fréquence d'affichage ---
+PROGRESS_UPDATE_FREQUENCY = 100 # Afficher un message toutes les 100 itérations
 
 
 # --- Boucle d'optimisation (Version Pilote ALNS) ---
@@ -82,14 +68,11 @@ def optimization_loop(
 ) -> dict[str, list[float]]:
     """
     Exécute la boucle d'optimisation en pilotant la classe ALNS.
-    
-    Retourne:
-      history = {"iter": [...], "cost_current": [...], "cost_best": [...]}
     """
     
     # 1. Initialisation
     random.seed(seed)
-    np.random.seed(seed) # ALNS utilise numpy, on fixe son seed aussi
+    np.random.seed(seed)
     
     history: Dict[str, List[float]] = {
         "iter": [], 
@@ -97,24 +80,19 @@ def optimization_loop(
         "cost_best": []
     }
     
-    # S'assurer que la solution initiale est évaluée (par notre "juge")
     if init_solution.cost == float("inf"):
         evaluate_solution(init_solution, instance)
 
     # 2. Initialiser l'orchestrateur ALNS
     try:
-        # On donne l'instance et la solution de départ à la classe ALNS
         alns_orchestrator = ALNS(instance, init_solution)
     except Exception as e:
         print(f"--- ERREUR CRITIQUE ---", file=sys.stderr)
-        print(f"Impossible d'initialiser la classe ALNS.", file=sys.stderr)
-        print(f"Vérifiez que 'alns.py' est compatible avec 'contracts.py'.", file=sys.stderr)
-        print(f"Erreur: {e}", file=sys.stderr)
+        print(f"Impossible d'initialiser la classe ALNS: {e}", file=sys.stderr)
         return history
 
     no_improve_count = 0
     
-    # Récupérer le coût initial de "best"
     best_cost_so_far = alns_orchestrator.best_solution.cost
     if not alns_orchestrator.best_solution.feasible:
         best_cost_so_far = float("inf")
@@ -123,60 +101,58 @@ def optimization_loop(
     # 3. Boucle principale (pilotage de l'ALNS)
     for i in range(max_iter):
         
-        # 3a. Enregistrer l'état (avant l'itération)
+        # 3a. Enregistrer l'état
         current_cost = alns_orchestrator.current_solution.cost
         
         history["iter"].append(float(i))
         history["cost_current"].append(current_cost)
         history["cost_best"].append(best_cost_so_far)
 
+        # --- [C'EST CE BLOC QUI AFFICHE LA PROGRESSION] ---
+        if i == 0 or (i + 1) % PROGRESS_UPDATE_FREQUENCY == 0 or (i + 1) == max_iter:
+            # {:>5} aligne le nombre à droite
+            # {:12,.2f} formatte le coût avec des virgules et 2 décimales
+            print(f"  -> Iter {i+1:>5}/{max_iter} | Coût Actuel: {current_cost:12,.2f} | Meilleur Coût: {best_cost_so_far:12,.2f}")
+        # --- [FIN DU BLOC] ---
+
         # 3b. Lancer UNE itération de l'ALNS
-        # C'est elle qui fait destroy/repair/VND/accept/adapt
         try:
-            # run_iteration() fait tout le travail et
-            # retourne True si elle a trouvé un nouveau "best"
             best_was_improved = alns_orchestrator.run_iteration()
         
         except NotImplementedError as e:
             print(f"--- ERREUR D'EXÉCUTION ALNS ---", file=sys.stderr)
-            print(f"La fonction '{e}' n'est pas implémentée dans 'alns.py' ou 'neighborhoods.py'.", file=sys.stderr)
-            print("Vous devez implémenter 'generate_candidates' ou une fonction similaire.", file=sys.stderr)
-            break # Arrêter la boucle
+            print(f"La fonction '{e}' n'est pas implémentée.", file=sys.stderr)
+            break
         except Exception as e:
             print(f"Erreur inconnue dans alns.run_iteration: {e}", file=sys.stderr)
             break
 
-        # 3c. Gérer la patience (le pilote gère l'arrêt)
+        # 3c. Gérer la patience
         if best_was_improved:
             no_improve_count = 0
-            # Mettre à jour notre "meilleur coût" local
             best_cost_so_far = alns_orchestrator.best_solution.cost
         else:
             no_improve_count += 1
         
         if no_improve_count >= patience:
-            # print(f"Arrêt anticipé à l'itération {i} (patience atteinte).")
+            print(f"  -> Arrêt anticipé (Patience {patience} atteinte)")
             break
     
     # 4. Retourner l'historique
     return history
 
-
-# --- Tests Rapides (Quick Check) ---
-
+# --- [BLOC DE TEST DE CE FICHIER (optimization_loop.py)] ---
 if __name__ == "__main__":
     """
-    Section de tests exécutable via : python -m src.optimization_loop
-    (Nécessite que TOUS les imports fonctionnent)
+    Test exécutable via : python -m src.optimization_loop
     """
     print("🚀 Lancement des tests rapides pour src/optimization_loop.py (Mode Pilote)...")
-    
+    import math # Nécessaire pour le test
+
     # 1. Création d'une mini-instance (inline)
-    # (Doit correspondre à la vraie dataclass Instance)
     try:
         from contracts import Instance, Solution
     except ImportError:
-        # Le bloc stub du haut gère déjà ça
         pass 
         
     DM_test = [
@@ -200,8 +176,7 @@ if __name__ == "__main__":
         routes=[ [0, 1, 0], [0, 2, 0], [0, 3, 0], [0, 4, 0] ]
     )
     
-    # 3. Évaluation initiale (doit être faite avant la boucle)
-    # On appelle le VRAI évaluateur (pas le STUB)
+    # 3. Évaluation initiale
     try:
         from evaluation import evaluate_solution
         sol_init = evaluate_solution(sol_init, tiny_instance)
@@ -236,7 +211,6 @@ if __name__ == "__main__":
     assert "cost_best" in history
     print(f"Clés de l'historique : {list(history.keys())} ✅")
     
-    # On vérifie que le coût s'est amélioré (ou est resté le même)
     final_best_cost = history["cost_best"][-1]
     print(f"Coût initial: 80.0, Coût final (best): {final_best_cost}")
     assert final_best_cost <= 80.0
