@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
-
 from .contracts import Instance, Solution
 
 import vrplib
