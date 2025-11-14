@@ -252,8 +252,6 @@ def main():
 
     print(f"[Main] Instance réelle (C101 tronquée): {n_clients} clients, Q={instance.capacity}")
 
-    # Graphe complet (avant algo)
-    visualize_full_graph(instance, "full_graph_c101.png", popout=False)
 
     # Résolution MILP
     solution = solve_milp(instance)
