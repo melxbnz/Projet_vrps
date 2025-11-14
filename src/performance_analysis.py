@@ -5,12 +5,20 @@ from typing import Dict, Optional
 import sys
 import matplotlib.pyplot as plt
 import numpy as np
-
+import pandas as pd  # ADD
+import os #ADD
 
 from .contracts import Instance, Solution
 from .instance_loader import load_instance
 
-
+#ADD
+try:
+    from .contracts import Instance, Solution
+    from .instance_loader import load_instance
+except ImportError:
+    print("Erreur d'import, assurez-vous de lancer le script comme un module.", file=sys.stderr)
+    sys.exit(1)
+#INCHANGER
 # Fonction pour extraire les coûts à partir de load_instance
 def take_cost(name_instance):
     """
@@ -87,17 +95,72 @@ def calcul_gap(liste_instances, dict_nos_solutions):
     return resultats
 
 
-nos_solutions = {
-    "C101": [830, 832, 834, 829, 828, 833, 831, 830, 829, 830,830, 832, 834, 829, 828, 833, 831, 830, 829, 830],
-    "C1_2_1": [1200, 1210, 1190, 1220, 1215,1200, 1210, 1190, 1220, 1215,1200, 1210, 1190, 1220, 1215,1200, 1210, 1190, 1220, 1215],
-    "C1_10_2": [60857,62857,64857,62457,60857,62856,64856,62456,60856,62856,64857,62457,60857,62857,64857,62456,60857,62856,64857,62457]
-}
+# =============================================================================
+# NOUVELLES FONCTIONS (POUR LIRE LE CSV)
+# =============================================================================
 
-nos_solutions_100 = {"C101": nos_solutions["C101"]}
-nos_solutions_200 = {"C1_2_1": nos_solutions["C1_2_1"]}
-nos_solutions_1000= {"C1_10_2": nos_solutions["C1_10_2"]}
-generate_graph(["C101"], nos_solutions_100)
-generate_graph(["C1_2_1"],nos_solutions_200)
-generate_graph(["C1_10_2"],nos_solutions_1000)
-generate_graph(["C101", "C1_2_1", "C1_10_2"], nos_solutions)
-calcul_gap(["C101", "C1_2_1", "C1_10_2"], nos_solutions)
+def load_results_from_csv(csv_file: str) -> Dict[str, List[float]]:
+    """
+    Charge les résultats depuis le CSV généré par le benchmark
+    et les formate pour les fonctions d'analyse.
+    """
+    try:
+        # S'assurer que le fichier est lu depuis la racine du projet
+        project_root = os.path.dirname(os.path.dirname(__file__)) # Va de src/ -> Projet_vrp/
+        csv_path = os.path.join(project_root, csv_file)
+        
+        df = pd.read_csv(csv_path)
+    except FileNotFoundError:
+        print(f"--- 🛑 ERREUR ---", file=sys.stderr)
+        print(f"Fichier '{csv_path}' non trouvé.", file=sys.stderr)
+        print("Veuillez vérifier que 'run_benchmark.py' a bien généré le fichier.", file=sys.stderr)
+        return {}
+    except Exception as e:
+        print(f"Erreur lors de la lecture du CSV: {e}", file=sys.stderr)
+        return {}
+
+    # Transformer le DataFrame en dictionnaire de listes de coûts
+    # Format attendu: {"C101": [828.94, 828.94, ...], "C1_2_1": [...]}
+    results_dict = {}
+    for instance_name in df['instance_name'].unique():
+        costs = df[df['instance_name'] == instance_name]['final_cost'].tolist()
+        results_dict[instance_name] = costs
+    
+    return results_dict
+
+
+# =============================================================================
+# POINT D'ENTRÉE MODIFIÉ
+# =============================================================================
+
+if __name__ == "__main__":
+    
+    # 1. Nom du fichier CSV généré par run_benchmark.py
+    CSV_FILENAME = "benchmark_results_parallel.csv"
+
+    # 2. Charger les données depuis ce fichier
+    print(f"--- Chargement des résultats depuis '{CSV_FILENAME}' ---")
+    nos_solutions = load_results_from_csv(CSV_FILENAME)
+
+    if not nos_solutions:
+        sys.exit(1) # Arrêter si le chargement a échoué
+
+    # 3. Obtenir la liste des instances qui ont été testées
+    liste_instances = list(nos_solutions.keys())
+    print(f"Instances trouvées dans le fichier: {liste_instances}")
+
+    # 4. Lancer les analyses (en utilisant vos fonctions)
+    
+    # Générer les graphiques individuels
+    for inst in liste_instances:
+        print(f"\n--- Analyse de l'instance: {inst} ---")
+        generate_graph([inst], {inst: nos_solutions[inst]})
+
+    # Générer le graphique combiné
+    print("\n--- Analyse combinée ---")
+    generate_graph(liste_instances, nos_solutions)
+
+    # Calculer et afficher les GAPs
+    calcul_gap(liste_instances, nos_solutions)
+
+    print("\n✅ Analyse terminée. Les graphiques (.png) sont sauvegardés à la racine du projet.")
