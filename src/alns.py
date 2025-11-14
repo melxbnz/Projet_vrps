@@ -48,7 +48,7 @@ from .neighborhoods import (  # Voisinages (Partie 5: apply in-place, delta O(1)
 
 # Constantes (Partie 6-7 PDF ; ajusté scalabilité Notebook: max_iter=2000 >800 pour conv)
 PENALTY_FACTOR = 1000.0  # Pénalité init infaisables (dynamique: *0.99 improve feas, *1.1 stagn/10)
-SEGMENT_SIZE = 0.  # Fraction destroy/repair (Partie 6: ~30% |Vc| clients modifiés)
+SEGMENT_SIZE = 0.4  # Fraction destroy/repair (Partie 6: ~30% |Vc| clients modifiés)
 WEIGHT_UPDATE = 0.1  # Alpha EMA adaptation (Partie 6: (1-α)old + α mean(hist[-10])*10)
 NO_IMPROVEMENT_LIMIT = 50  # Seuil shake (Partie 6.3: diversification si no_improv >=50)
 
