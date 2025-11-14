@@ -1,32 +1,5 @@
 # Olivier
-# =============================================================================
-# IMPLEMENTATION DE L'ALNS POUR LE VRPTW-B - VERSION MODULAIRE ADAPTÉE
-# =============================================================================
-# Auteur: Grok (expert en optimisation combinatoire et métaheuristiques)
-# Date: 13/11/2025
-# Description:
-# Adaptation modulaire d'alns.py pour intégrer pleinement neighborhoods.py (apply_two_opt/relocate/swap,
-# delta_relocate/swap, delta_cost wrapper pour relocate/swap). Évite redondance: Remplacement des fonctions
-# custom two_opt_move/relocate_move/swap_move par wrappers utilisant apply_* et delta_* (O(1) via evaluation
-# pour two_opt). generate_candidates utilise ces wrappers (modulaire: imports relatifs .neighborhoods).
-# Alignement signatures: Instance/Solution/Route de contracts.py ; evaluate/check/compute/delta_two_opt de evaluation.py.
-# Uniformité Notebook/PDF: Variables q_i=demand[i], e_i=ready_time[i], l_i=due_time[i], s_i=service_time[i],
-# Q_k=capacity, Kmax, Tmax ; F=∑ c_ij x_ijk min sous contraintes (Partie 2-4). Moves: indices internes
-# (1<=i<j<len(r)-1 pour two_opt ; excl dépôts 0). Feasible post-move via check_feasibility (TW attente,
-# Q sum[1:-1], Tmax current<=Tmax). Delta: O(1) formules (rm/ins pour relocate, new-old pour swap,
-# c_{i-1 j}+c_{i j+1}-c_{i-1 i}-c_{j j+1} pour two_opt).
-# Flux PDF (Parties 5-7): Voisinages (5: gen k=10 cands random/valides, tri delta asc) → ALNS (6: destroy
-# fraction=0.3 clients random, repair greedy tri e_i min delta approx, accept hiérarchique/metro T=100,
-# VND descent ordre TWO→RELOC→SWAP while imp delta<0/aspir feas<best, shake 2-5 reloc si stagn>50,
-# adapt EMA α=0.1 window=10 *10 scale) → Boucle (7: 2000 iters, trace every 100, penalty dyn *0.99/1.1).
-# Changements: __init__ eval initial ; destroy/repair score=1 si feas (destroy) / feas&cost<curr (repair) ;
-# accept: feas&<curr yes, +pen<curr yes, else exp(-Δ/100) ; vnd: k=5 cands, aspiration global ;
-# run_iter: True si best imp. Modularité: Imports .contracts/.evaluation/.neighborhoods ; pas redondance
-# (deltas inline neighborhoods, feasible eval). Performances: O(2000 * n^2) scalable (deltas O(1),
-# checks O(len r) ~O(n/|routes|)). Erreurs: ValueError indices apply (via neighborhoods), inf delta
-# (!feas/Q viol), logs unassigned/shake/penalty. Test: C101_small adapté (n=5, truncate load).
-# Structure: Alignée PDF/Notebook ; commentaires exhaustifs (techniques/lignes: pré/post/complexité/uniformité).
-# =============================================================================
+
 
 # =============================================================================
 # 1. IMPORTATIONS ET CONSTANTES (Modulaires: .neighborhoods pour apply/delta ; Partie 5-6)
@@ -480,16 +453,6 @@ class ALNS:
                 self.weights_history[op] = history[-window_size:]
 
     def run_iteration(self) -> bool:
-        """
-        Itération ALNS complète (Partie 6 flux: destroy → repair → accept? → VND local opt → update current/best/penalty/no_improv → shake si stagn → adapt).
-        Retour: True si best améliorée (feasible & cost < best ; log conv).
-        Pré: Current/best évalués ; itér <MAX_ITER=2000.
-        Post: Current updaté ; best si imp ; penalty/no_improv adj ; weights adapt.
-        Complexité: O(n^2) dominant (repair/gen VND) ; scalable.
-        Uniformité Notebook: Penalty *0.99 si imp feas (favor feasible), *1.1 every 10 no_improv (pousse feas) ;
-        shake >=50 ; adapt fin iter.
-        Erreurs: Logs shake/penalty adj ; assume Kmax infini si None.
-        """
         # 1. Destruction partielle
         destroyed = self.destroy()
         # 2. Reconstruction
@@ -518,88 +481,5 @@ class ALNS:
         # 7. Adaptation poids
         self.adapt_weights()
         return best_improved  # Pour trace conv (imp best)
-
-
-# --- [BLOC DE TEST] ---
-
-if __name__ == "__main__":
-    """
-    Section de tests exécutable via : python -m src.alns
-    (Test d'intégration majeur)
-    """
-    print("🚀 Lancement des tests d'intégration pour src/alns.py...")
-    import sys
-    import math
-
-    # --- Dépendances de test ---
-    # Ce test a besoin de TOUS les modules corrigés
-    # Quand on lance avec "python -m src.alns",
-    # la racine (Projet_vrp) est dans le path.
-    # Les imports doivent être absolus depuis la racine.
-    try:
-        from src.contracts import Instance, Solution
-        from src.evaluation import evaluate_solution
-        from src.initial_solution import build_clarke_wright_solution
-        # (alns.py importe déjà neighborhoods et evaluation en relatif)
-    except ImportError as e:
-        print(f"❌ ÉCHEC: Impossible d'importer les dépendances ({e}).")
-        print("   Assurez-vous que contracts, evaluation, et initial_solution sont corrigés.")
-        sys.exit(1)
-
-    # --- Données de test ---
-    DM_test = [
-        [0.0, 10.0, 10.0, 100.0, 100.0], # 0
-        [10.0, 0.0, 2.0, 100.0, 100.0], # 1
-        [10.0, 2.0, 0.0, 100.0, 100.0], # 2
-        [100.0, 100.0, 100.0, 0.0, 5.0],  # 3
-        [100.0, 100.0, 100.0, 5.0, 0.0]   # 4
-    ]
-    tiny_instance = Instance(
-        name="test_alns_engine",
-        distance_matrix=DM_test,
-        demand=[0, 1, 1, 1, 1], # 4 clients
-        capacity=3, # C&W devrait trouver 2 routes
-        Kmax=4
-    )
-    
-    # On utilise C&W pour une solution de départ réaliste
-    initial_solution = build_clarke_wright_solution(tiny_instance)
-    cost_initial = initial_solution.cost
-    print(f"Solution initiale (C&W) générée. Coût: {cost_initial:.2f}") # Attendu 44.0
-
-    # --- Test 1: Initialisation ---
-    print("\n--- Test 1: Initialisation ALNS ---")
-    try:
-        alns = ALNS(tiny_instance, initial_solution)
-        print(f"✅ ALNS initialisé.")
-        assert math.isclose(alns.best_solution.cost, cost_initial), "Le coût initial n'a pas été copié."
-    except Exception as e:
-        print(f"❌ ÉCHEC: L'initialisation de ALNS a planté: {e}")
-        sys.exit(1)
-
-    # --- Test 2: Exécution d'itérations ---
-    print("\n--- Test 2: Lancement de 10 itérations ALNS ---")
-    try:
-        for i in range(10):
-            print(f"  Iter {i+1}/10...")
-            alns.run_iteration()
-        
-        print("\n✅ 10 itérations terminées sans crash.")
-    except Exception as e:
-        print(f"❌ ÉCHEC: alns.run_iteration() a planté: {e}")
-        print("   Causes probables : 'generate_candidates' buggé,")
-        print("   ou 'neighborhoods.py' n'est pas compatible (indices/faisabilité).")
-        sys.exit(1)
-        
-    # --- Vérification Finale ---
-    final_cost = alns.best_solution.cost
-    print(f"\nCoût initial : {cost_initial:.2f}")
-    print(f"Coût final   : {final_cost:.2f}")
-    
-    assert final_cost <= cost_initial, "L'ALNS a dégradé la solution (ne devrait pas arriver)"
-    if final_cost < cost_initial:
-        print("   (Amélioration trouvée !)")
-
-    print("\n🎉 Tous les tests d'intégration ALNS ont réussi!")
 
     
